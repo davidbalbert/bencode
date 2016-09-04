@@ -4,13 +4,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "buf.h"
 #include "vec.h"
 
 typedef enum BTag {
-    TInt,
-    TString,
-    TList,
-    TDict,
+    BInt,
+    BString,
+    BList,
+    BDict,
 } BTag;
 
 typedef struct BObject BObject;
@@ -20,7 +21,7 @@ struct BObject {
     union {
         int i;
         char *s;
-        Vec *v; // for TList and TDict
+        Vec *v; // for BList and BDict
     } data;
 };
 
@@ -49,7 +50,7 @@ emalloc(size_t size)
 }
 
 static BObject *
-balloc(BTag tag)
+boalloc(BTag tag)
 {
     BObject *o = emalloc(sizeof(BObject));
     o->tag = tag;
@@ -57,12 +58,12 @@ balloc(BTag tag)
     return o;
 }
 
-void bfree(BObject *o);
+void bofree(BObject *o);
 
 static void
 freelist(void *o, void *extra)
 {
-    bfree((BObject *)o);
+    bofree((BObject *)o);
 }
 
 static void
@@ -70,31 +71,31 @@ freedict(void *o, void *extra)
 {
     Pair *p = (Pair *)o;
 
-    bfree(p->key);
-    bfree(p->val);
+    bofree(p->key);
+    bofree(p->val);
 
     free(p);
 }
 
 void
-bfree(BObject *o)
+bofree(BObject *o)
 {
     Vec *v;
 
     switch (o->tag) {
-        case TList:
+        case BList:
             v = o->data.v;
             veach(v, freelist, NULL);
             break;
-        case TDict:
+        case BDict:
             v = o->data.v;
             veach(v, freedict, NULL);
             break;
-        case TInt:
-        case TString:
+        case BInt:
+        case BString:
             break;
         default:
-            panic("bfree: unknown tag");
+            panic("bofree: unknown tag");
             break;
     }
 
@@ -104,7 +105,7 @@ bfree(BObject *o)
 static BObject *
 listnew()
 {
-    BObject *o = balloc(TList);
+    BObject *o = boalloc(BList);
     o->data.v = vnew();
 
     return o;
@@ -112,7 +113,7 @@ listnew()
 
 static void
 listappend(BObject *l, BObject *o){
-    assert(l->tag == TList);
+    assert(l->tag == BList);
 
     Vec *v = l->data.v;
 
@@ -122,7 +123,7 @@ listappend(BObject *l, BObject *o){
 static BObject *
 dictnew()
 {
-    BObject *o = balloc(TDict);
+    BObject *o = boalloc(BDict);
     o->data.v = vnew();
 
     return o;
@@ -134,8 +135,8 @@ findpair(void *o, void *extra)
     Pair *pair = (Pair *)o;
     BObject *needle = (BObject *)extra;
 
-    assert(pair->key->tag == TString);
-    assert(needle->tag == TString);
+    assert(pair->key->tag == BString);
+    assert(needle->tag == BString);
 
     char *s1 = pair->key->data.s;
     char *s2 = needle->data.s;
@@ -146,14 +147,14 @@ findpair(void *o, void *extra)
 static void
 dictset(BObject *dict, BObject *key, BObject *val)
 {
-    assert(dict->tag == TDict);
-    assert(key->tag == TString);
+    assert(dict->tag == BDict);
+    assert(key->tag == BString);
 
     Pair *pair = (Pair *)vfind(dict->data.v, findpair, key);
 
     if (pair) {
-        bfree(pair->key);
-        bfree(pair->val);
+        bofree(pair->key);
+        bofree(pair->val);
 
         pair->key = key;
         pair->val = val;
@@ -174,13 +175,13 @@ printtab(int ntab) {
     }
 }
 
-static void bprint0(BObject *o, int ntab);
+static void boprint0(BObject *o, int ntab);
 
 static void
 printlist(void *o, void *extra)
 {
     int ntab = *((int *)extra);
-    bprint0((BObject *)o, ntab+1);
+    boprint0((BObject *)o, ntab+1);
 }
 
 static void
@@ -189,32 +190,32 @@ printdict(void *o, void *extra)
     int ntab = *((int *)extra);
     Pair *p = (Pair *)o;
 
-    bprint0(p->key, ntab+1);
-    bprint0(p->val, ntab+2);
+    boprint0(p->key, ntab+1);
+    boprint0(p->val, ntab+2);
 }
 
 static void
-bprint0(BObject *o, int ntab)
+boprint0(BObject *o, int ntab)
 {
     Vec *v;
 
     switch (o->tag) {
-        case TInt:
+        case BInt:
             printtab(ntab);
             printf("BInt %d\n", o->data.i);
             break;
-        case TString:
+        case BString:
             printtab(ntab);
             printf("BString %s\n", o->data.s);
             break;
-        case TList:
+        case BList:
             printtab(ntab);
             printf("BList\n");
 
             v = o->data.v;
             veach(v, printlist, &ntab);
             break;
-        case TDict:
+        case BDict:
             printtab(ntab);
             printf("BDict\n");
 
@@ -257,7 +258,7 @@ decodeint(char *s, char **sp) {
         n *= -1;
     }
 
-    o = balloc(TInt);
+    o = boalloc(BInt);
     o->data.i = n;
 
     return o;
@@ -283,7 +284,7 @@ decodestring(char *s, char **sp)
         s++;
     }
 
-    o = balloc(TString);
+    o = boalloc(BString);
     o->data.s = emalloc(len * sizeof(char));
 
     for (i = 0; i < len; i++) {
@@ -339,14 +340,84 @@ decodedict(char *s, char **sp)
 }
 
 void
-bprint(BObject *o) {
-    bprint0(o, 0);
+boprint(BObject *o) {
+    boprint0(o, 0);
+}
+
+static void bencode0(BObject *o, Buf *b);
+
+static void
+bencodelist(void *o, void *extra)
+{
+    bencode0((BObject *)o, (Buf *)extra);
+}
+
+static void
+bencodedict(void *o, void *extra)
+{
+    Pair *pair = (Pair *)o;
+    Buf *b = (Buf *)extra;
+
+    bencode0(pair->key, b);
+    bencode0(pair->val, b);
+}
+
+static int
+sortpair(void *a, void *b)
+{
+    Pair *p1 = (Pair *)a;
+    Pair *p2 = (Pair *)b;
+
+    assert(p1->key->tag == BString);
+    assert(p2->key->tag == BString);
+
+    return strcmp(p1->key->data.s, p2->key->data.s);
+}
+
+static void
+bencode0(BObject *o, Buf *b)
+{
+    size_t len;
+
+    switch (o->tag) {
+        case BInt:
+            bputc(b, 'i');
+            bputint(b, o->data.i);
+            bputc(b, 'e');
+            break;
+        case BString:
+            bputint(b, strlen(o->data.s));
+            bputc(b, ':');
+            bappend(b, o->data.s);
+            break;
+        case BList:
+            bputc(b, 'l');
+            veach(o->data.v, bencodelist, b);
+            bputc(b, 'e');
+            break;
+        case BDict:
+            bputc(b, 'd');
+            vsort(o->data.v, sortpair);
+            veach(o->data.v, bencodedict, b);
+            bputc(b, 'e');
+            break;
+        default:
+            panic("bencode0: unknown tag");
+    }
 }
 
 char *
 bencode(BObject *o)
 {
-    return "";
+    Buf *b = bnew();
+    char *s;
+
+    bencode0(o, b);
+
+    s = bstr(b);
+    bfree(b);
+
+    return s;
 }
 
 static BObject *
@@ -383,6 +454,9 @@ bdecode(char *s)
 int
 main(int argc, const char *argv[])
 {
-    bprint(bdecode("d1:ai1e1:ai2ee"));
+    BObject *o = bdecode("d1:bi100e1:ai200ee");
+    boprint(o);
+    printf("%s\n", bencode(o));
+    bofree(o);
     return 0;
 }

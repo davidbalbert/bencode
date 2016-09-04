@@ -2,13 +2,14 @@
 
 #include "vec.h"
 
-#define INITCAPA 5
+#define VINITCAPA 5
 
-typedef struct Vec {
+typedef struct Vec Vec;
+struct Vec {
     int len;
     int capa;
     void **data;
-} Vec;
+};
 
 void *emalloc(size_t size);
 
@@ -16,9 +17,9 @@ Vec *
 vnew(void)
 {
     Vec *v = emalloc(sizeof(Vec));
-    v->capa = INITCAPA;
+    v->capa = VINITCAPA;
     v->len = 0;
-    v->data = emalloc(INITCAPA * sizeof(void *));
+    v->data = emalloc(VINITCAPA * sizeof(void *));
 
     return v;
 }
@@ -74,4 +75,22 @@ vfind(Vec *v, FinderFunc f, void *extra)
     }
 
     return NULL;
+}
+
+
+static int
+compare(void *thunk, const void *a, const void *b)
+{
+    SortFunc f = (SortFunc)thunk;
+
+    void *ap = *((void **)a);
+    void *bp = *((void **)b);
+
+    return f(ap, bp);
+}
+
+void
+vsort(Vec *v, SortFunc f)
+{
+    qsort_r(v->data, v->len, sizeof(void *), f, compare);
 }

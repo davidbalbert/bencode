@@ -1,5 +1,6 @@
 OBJS =\
 	  bencode.o\
+	  buf.o\
 	  vec.o
 
 CFLAGS = -MD
