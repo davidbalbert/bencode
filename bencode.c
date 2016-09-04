@@ -13,9 +13,11 @@ typedef struct BObject BObject;
 typedef struct BList BList;
 typedef struct BDict BDict;
 
+#define INITCAPA 5
 struct BList {
     int len;
-    BObject *a;
+    int capa;
+    BObject **a;
 };
 
 struct BDict {
@@ -52,6 +54,89 @@ emalloc(size_t size)
     return p;
 }
 
+static BObject *
+balloc(BTag tag)
+{
+    BObject *o = emalloc(sizeof(BObject));
+    o->tag = tag;
+
+    return o;
+}
+
+static void
+blfree(BList *l)
+{
+    free(l->a);
+    free(l);
+}
+
+static void
+bdfree(BDict *d)
+{
+}
+
+void
+bfree(BObject *o)
+{
+    switch (o->tag) {
+        case TList:
+            blfree(o->data.l);
+            break;
+        case TDict:
+            bdfree(o->data.d);
+            break;
+        case TInt:
+        case TString:
+            break;
+        default:
+            panic("bfree: unknown tag");
+            break;
+    }
+
+    free(o);
+}
+
+static void
+blgrow(BList *l)
+{
+    BObject **new = emalloc(2*l->capa * sizeof(BObject *));
+    BObject **old = l->a;
+
+    for (int i = 0; i < l->len; i++) {
+        new[i] = old[i];
+    }
+
+    free(old);
+
+    l->a = new;
+    l->capa *= 2;
+}
+
+static BObject *
+blalloc()
+{
+    BObject *o;
+    BList *l = emalloc(sizeof(BList));
+
+    l->capa = INITCAPA;
+    l->len = 0;
+    l->a = emalloc(INITCAPA * sizeof(BObject *));
+
+    o = balloc(TList);
+    o->data.l = l;
+
+    return o;
+}
+
+void
+blappend(BList *l, BObject *o){
+    if (l->len == l->capa) {
+        blgrow(l);
+    }
+
+    l->a[l->len++] = o;
+}
+
 BObject *
 blget(BList *l, int i)
 {
@@ -59,7 +144,7 @@ blget(BList *l, int i)
         panic("blget: out of bounds");
     }
 
-    return &l->a[i];
+    return l->a[i];
 }
 
 void
@@ -101,7 +186,7 @@ bprint0(BObject *o, int ntab)
 }
 
 static BObject *
-decodeint(char *s) {
+decodeint(char *s, char **sp) {
     int neg = 0;
     int n = 0;
     BObject *o;
@@ -116,6 +201,7 @@ decodeint(char *s) {
             n *= 10;
             n += *s - '0';
         } else if (*s == 'e') {
+            s++;
             break;
         } else {
             fprintf(stderr, "decodeint: unexpected character `%c'\n", *s);
@@ -123,6 +209,7 @@ decodeint(char *s) {
         }
         s++;
     }
+    *sp = s;
 
     if (neg) {
         n *= -1;
@@ -136,7 +223,7 @@ decodeint(char *s) {
 }
 
 static BObject *
-decodestring(char *s)
+decodestring(char *s, char **sp)
 {
     int len = 0;
     int i = 0;
@@ -155,19 +242,37 @@ decodestring(char *s)
         s++;
     }
 
-    o = emalloc(sizeof(BObject));
-    o->tag = TString;
+    o = balloc(TString);
     o->data.s = emalloc(len * sizeof(char));
 
     for (i = 0; i < len; i++) {
-        o->data.s[i] = s[i];
+        o->data.s[i] = *s;
+        s++;
     }
+    *sp = s;
 
     o->data.s[i] = '\0';
 
     return o;
 }
 
+static BObject * bdecode0(char *s, char **sp);
+
+static BObject *
+decodelist(char *s, char **sp)
+{
+    BObject *o = blalloc();
+    BList *l = o->data.l;
+
+    while (*s != 'e') {
+        blappend(l, bdecode0(s, &s));
+    }
+
+    s++; // skip 'e'
+    *sp = s;
+
+    return o;
+}
 
 void
 bprint(BObject *o) {
@@ -180,24 +285,38 @@ bencode(BObject *o)
     return "";
 }
 
+static BObject *
+bdecode0(char *s, char **sp)
+{
+    BObject *o;
+
+    if (*s == 'i') {
+        o = decodeint(s + 1, &s);
+    } else if (*s == 'l') {
+        o = decodelist(s + 1, &s);
+    } else if (isdigit(*s)) {
+        o = decodestring(s, &s);
+    } else {
+        fprintf(stderr, "bdecode0: unknown tag `%c'\n", *s);
+        exit(1);
+    }
+
+    if (sp) {
+        *sp = s;
+    }
+
+    return o;
+}
+
 BObject *
 bdecode(char *s)
 {
-    if (*s == 'i') {
-        return decodeint(s + 1);
-    } else if (isdigit(*s)) {
-        return decodestring(s);
-    } else {
-        fprintf(stderr, "bdecode: unknown tag `%c'\n", *s);
-        exit(1);
-    }
+    return bdecode0(s, NULL);
 }
-
-
 
 int
 main(int argc, const char *argv[])
 {
-    bprint(bdecode("5:hello"));
+    bprint(bdecode("l5:helloi123e7:goodbyee"));
     return 0;
 }
