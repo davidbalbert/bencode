@@ -63,3 +63,15 @@ veach(Vec *v, IterFunc f, void *extra)
         f(v->data[i], extra);
     }
 }
+
+void *
+vfind(Vec *v, FinderFunc f, void *extra)
+{
+    for (int i = 0; i < v->len; i++) {
+        if (f(v->data[i], extra)) {
+            return v->data[i];
+        }
+    }
+
+    return NULL;
+}

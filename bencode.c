@@ -2,6 +2,7 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "vec.h"
 
@@ -125,6 +126,45 @@ dictnew()
     o->data.v = vnew();
 
     return o;
+}
+
+int
+findpair(void *o, void *extra)
+{
+    Pair *pair = (Pair *)o;
+    BObject *needle = (BObject *)extra;
+
+    assert(pair->key->tag == TString);
+    assert(needle->tag == TString);
+
+    char *s1 = pair->key->data.s;
+    char *s2 = needle->data.s;
+
+    return strcmp(s1, s2) == 0;
+}
+
+static void
+dictset(BObject *dict, BObject *key, BObject *val)
+{
+    assert(dict->tag == TDict);
+    assert(key->tag == TString);
+
+    Pair *pair = (Pair *)vfind(dict->data.v, findpair, key);
+
+    if (pair) {
+        bfree(pair->key);
+        bfree(pair->val);
+
+        pair->key = key;
+        pair->val = val;
+    } else {
+        pair = emalloc(sizeof(Pair));
+
+        pair->key = key;
+        pair->val = val;
+
+        vappend(dict->data.v, pair);
+    }
 }
 
 static void
@@ -262,16 +302,40 @@ static BObject * bdecode0(char *s, char **sp);
 static BObject *
 decodelist(char *s, char **sp)
 {
-    BObject *o = listnew();
+    BObject *l = listnew();
 
     while (*s != 'e') {
-        listappend(o, bdecode0(s, &s));
+        listappend(l, bdecode0(s, &s));
     }
 
     s++; // skip 'e'
     *sp = s;
 
-    return o;
+    return l;
+}
+
+static BObject *
+decodedict(char *s, char **sp)
+{
+    BObject *d = dictnew();
+    BObject *k, *v;
+
+    while (*s != 'e') {
+        if (!isdigit(*s)) {
+            panic("dict keys must be strings");
+            exit(1);
+        }
+
+        k = decodestring(s, &s);
+        v = bdecode0(s, &s);
+
+        dictset(d, k, v);
+    }
+
+    s++; // skip 'e'
+    *sp = s;
+
+    return d;
 }
 
 void
@@ -295,6 +359,7 @@ bdecode0(char *s, char **sp)
     } else if (*s == 'l') {
         o = decodelist(s + 1, &s);
     } else if (*s == 'd') {
+        o = decodedict(s + 1, &s);
     } else if (isdigit(*s)) {
         o = decodestring(s, &s);
     } else {
@@ -318,6 +383,6 @@ bdecode(char *s)
 int
 main(int argc, const char *argv[])
 {
-    bprint(bdecode("li1el5:helloi2eei3ee"));
+    bprint(bdecode("d1:ai1e1:ai2ee"));
     return 0;
 }
