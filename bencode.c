@@ -1,6 +1,9 @@
+#include <assert.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#include "vec.h"
 
 typedef enum BTag {
     TInt,
@@ -10,30 +13,20 @@ typedef enum BTag {
 } BTag;
 
 typedef struct BObject BObject;
-typedef struct BList BList;
-typedef struct BDict BDict;
-
-#define INITCAPA 5
-struct BList {
-    int len;
-    int capa;
-    BObject **a;
-};
-
-struct BDict {
-    int len;
-    BObject *d;
-};
 
 struct BObject {
     BTag tag;
     union {
         int i;
         char *s;
-        BList *l;
-        BDict *d;
+        Vec *v; // for TList and TDict
     } data;
 };
+
+typedef struct Pair {
+    BObject *key;
+    BObject *val;
+} Pair;
 
 void
 panic(char *s)
@@ -63,27 +56,38 @@ balloc(BTag tag)
     return o;
 }
 
+void bfree(BObject *o);
+
 static void
-blfree(BList *l)
+freelist(void *o, void *extra)
 {
-    free(l->a);
-    free(l);
+    bfree((BObject *)o);
 }
 
 static void
-bdfree(BDict *d)
+freedict(void *o, void *extra)
 {
+    Pair *p = (Pair *)o;
+
+    bfree(p->key);
+    bfree(p->val);
+
+    free(p);
 }
 
 void
 bfree(BObject *o)
 {
+    Vec *v;
+
     switch (o->tag) {
         case TList:
-            blfree(o->data.l);
+            v = o->data.v;
+            veach(v, freelist, NULL);
             break;
         case TDict:
-            bdfree(o->data.d);
+            v = o->data.v;
+            veach(v, freedict, NULL);
             break;
         case TInt:
         case TString:
@@ -96,68 +100,63 @@ bfree(BObject *o)
     free(o);
 }
 
-static void
-blgrow(BList *l)
-{
-    BObject **new = emalloc(2*l->capa * sizeof(BObject *));
-    BObject **old = l->a;
-
-    for (int i = 0; i < l->len; i++) {
-        new[i] = old[i];
-    }
-
-    free(old);
-
-    l->a = new;
-    l->capa *= 2;
-}
-
 static BObject *
-blalloc()
+listnew()
 {
-    BObject *o;
-    BList *l = emalloc(sizeof(BList));
-
-    l->capa = INITCAPA;
-    l->len = 0;
-    l->a = emalloc(INITCAPA * sizeof(BObject *));
-
-    o = balloc(TList);
-    o->data.l = l;
+    BObject *o = balloc(TList);
+    o->data.v = vnew();
 
     return o;
 }
 
-void
-blappend(BList *l, BObject *o){
-    if (l->len == l->capa) {
-        blgrow(l);
-    }
+static void
+listappend(BObject *l, BObject *o){
+    assert(l->tag == TList);
 
-    l->a[l->len++] = o;
+    Vec *v = l->data.v;
+
+    vappend(v, o);
 }
 
-BObject *
-blget(BList *l, int i)
+static BObject *
+dictnew()
 {
-    if (i >= l->len) {
-        panic("blget: out of bounds");
-    }
+    BObject *o = balloc(TDict);
+    o->data.v = vnew();
 
-    return l->a[i];
+    return o;
 }
 
-void
+static void
 printtab(int ntab) {
     for (int i = 0; i < ntab; i++) {
         printf("  ");
     }
 }
 
-void
+static void bprint0(BObject *o, int ntab);
+
+static void
+printlist(void *o, void *extra)
+{
+    int ntab = *((int *)extra);
+    bprint0((BObject *)o, ntab+1);
+}
+
+static void
+printdict(void *o, void *extra)
+{
+    int ntab = *((int *)extra);
+    Pair *p = (Pair *)o;
+
+    bprint0(p->key, ntab+1);
+    bprint0(p->val, ntab+2);
+}
+
+static void
 bprint0(BObject *o, int ntab)
 {
-    BList *l;
+    Vec *v;
 
     switch (o->tag) {
         case TInt:
@@ -169,15 +168,18 @@ bprint0(BObject *o, int ntab)
             printf("BString %s\n", o->data.s);
             break;
         case TList:
-            l = o->data.l;
             printtab(ntab);
             printf("BList\n");
-            for (int i = 0; i < l->len; i++) {
-                bprint0(blget(l, i), ntab+1);
-            }
+
+            v = o->data.v;
+            veach(v, printlist, &ntab);
             break;
         case TDict:
-            panic("no dicts yet");
+            printtab(ntab);
+            printf("BDict\n");
+
+            v = o->data.v;
+            veach(v, printdict, &ntab);
             break;
         default:
             panic("unknown tag");
@@ -215,8 +217,7 @@ decodeint(char *s, char **sp) {
         n *= -1;
     }
 
-    o = emalloc(sizeof(BObject));
-    o->tag = TInt;
+    o = balloc(TInt);
     o->data.i = n;
 
     return o;
@@ -261,11 +262,10 @@ static BObject * bdecode0(char *s, char **sp);
 static BObject *
 decodelist(char *s, char **sp)
 {
-    BObject *o = blalloc();
-    BList *l = o->data.l;
+    BObject *o = listnew();
 
     while (*s != 'e') {
-        blappend(l, bdecode0(s, &s));
+        listappend(o, bdecode0(s, &s));
     }
 
     s++; // skip 'e'
@@ -294,6 +294,7 @@ bdecode0(char *s, char **sp)
         o = decodeint(s + 1, &s);
     } else if (*s == 'l') {
         o = decodelist(s + 1, &s);
+    } else if (*s == 'd') {
     } else if (isdigit(*s)) {
         o = decodestring(s, &s);
     } else {
@@ -317,6 +318,6 @@ bdecode(char *s)
 int
 main(int argc, const char *argv[])
 {
-    bprint(bdecode("l5:helloi123e7:goodbyee"));
+    bprint(bdecode("li1el5:helloi2eei3ee"));
     return 0;
 }

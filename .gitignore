@@ -1,2 +1,4 @@
 bencode
 *.dSYM
+*.o
+*.d
