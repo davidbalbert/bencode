@@ -11,7 +11,6 @@ typedef struct Vec {
 } Vec;
 
 void *emalloc(size_t size);
-void panic(char *s);
 
 Vec *
 vnew(void)
@@ -55,16 +54,6 @@ vappend(Vec *v, void *o)
     }
 
     v->data[v->len++] = o;
-}
-
-void *
-vget(Vec *v, int i)
-{
-    if (i >= v->len) {
-        panic("vget: out of bounds");
-    }
-
-    return v->data[i];
 }
 
 void
